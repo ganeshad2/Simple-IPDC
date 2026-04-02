@@ -39,12 +39,20 @@ reg [3:0] origin_row_d, origin_row_q, origin_col_d, origin_col_q;
 
 // how much to index by for each display size from the last pixel from a row
 // example: for 16by16, with origin 0x0, pixels = 0,1,2,3 (4 + 12 = 16) start of next row, 4 from there and so on
-wire [5:0] pixel_index = (image_size_q == 4'd16) ? 6'd12 :
-                         (image_size_q == 4'd8)  ? 6'd28 :
-                         (image_size_q == 4'd2)  ? 6'd44 : 6'd0;
+
+// ^ ignore 
+
+
+
+wire [2:0] pixel_offset = (display_q == 3'd2) ? 3'd2 :
+                        (display_q == 3'd1) ? 3'd4  : 3'd1;
+
 
 wire [4:0] max_pixels = (display_q == 3'd4) ? 5'd16 :
                         (display_q == 3'd2) ? 5'd4  : 5'd1;
+
+wire [3:0] row_off_2 = output_ctr_q[1] ? 4'd2 : 4'd0;
+wire [3:0] col_off_2 = output_ctr_q[0] ? 4'd2 : 4'd0;
 
 localparam [2:0]
 	IDLE = 3'd0,
@@ -129,29 +137,29 @@ always @(*) begin
 		
 			// right 
 			if (curr_op_q == 4'b0100) begin
-				if ((origin_col_q + 1'd1 + display_q) < image_size_q) begin
-					origin_col_d = origin_col_q + 1'd1;
+				if ((origin_col_q + pixel_offset + display_q) < image_size_q) begin
+					origin_col_d = origin_col_q + pixel_offset;
 				end
 			end
 
 			// left
 			if (curr_op_q == 4'b0101) begin
-				if (origin_col_q > 0) begin
-					origin_col_d = origin_col_q - 1'd1;
+				if ((origin_col_q >= pixel_offset)) begin
+					origin_col_d = origin_col_q - pixel_offset;
 				end
 			end
 
 			// up
 			if (curr_op_q == 4'b0110) begin
-				if (origin_row_q > 0) begin
-					origin_row_d = origin_row_q - 1'd1;
+				if ((origin_row_q >= pixel_offset)) begin
+					origin_row_d = origin_row_q - pixel_offset;
 				end
 			end
 
 			// down
 			if (curr_op_q == 4'b0111) begin
-				if ((origin_row_q + 1'd1 + display_q) < image_size_q) begin
-					origin_row_d = origin_row_q + 1'd1;
+				if ((origin_row_q + pixel_offset + display_q) < image_size_q) begin
+					origin_row_d = origin_row_q + pixel_offset;
 				end
 			end
 			
@@ -161,6 +169,18 @@ always @(*) begin
 
 		SCALE : begin
 			o_op_ready_w = 1'b0;
+
+			if (curr_op_q == 4'b1000) begin
+			    if (display_q > 3'd1)
+				display_d = display_q >> 1;
+			end
+
+			if (curr_op_q == 4'b1001) begin
+			    if (display_q < 3'd4)
+				display_d = display_q << 1;
+			end
+
+			next_state = DONE;
 		end
 
 		MEDIAN_FILTERING : begin
@@ -181,8 +201,10 @@ always @(*) begin
 				    3'd4: o_out_data_w = pixels[{origin_row_q + output_ctr_q[3:2],
 								  origin_col_q + output_ctr_q[1:0]}];
 
-				    3'd2: o_out_data_w = pixels[{origin_row_q + output_ctr_q[1]*2,
-								  origin_col_q + output_ctr_q[0]*2}];
+				    //3'd2: o_out_data_w = pixels[{origin_row_q + output_ctr_q[1]*2,
+				    //				  origin_col_q + output_ctr_q[0]*2}];
+					 3'd2: o_out_data_w = pixels[{origin_row_q + row_off_2,
+                                 origin_col_q + col_off_2}];
 
 				    3'd1: o_out_data_w = pixels[{origin_row_q, origin_col_q}];
 
