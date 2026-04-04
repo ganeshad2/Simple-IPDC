@@ -43,7 +43,6 @@ reg [3:0] origin_row_d, origin_row_q, origin_col_d, origin_col_q;
 // ^ ignore 
 
 
-
 wire [2:0] pixel_offset = (display_q == 3'd2) ? 3'd2 :
                         (display_q == 3'd1) ? 3'd4  : 3'd1;
 
@@ -53,6 +52,11 @@ wire [4:0] max_pixels = (display_q == 3'd4) ? 5'd16 :
 
 wire [3:0] row_off_2 = output_ctr_q[1] ? 4'd2 : 4'd0;
 wire [3:0] col_off_2 = output_ctr_q[0] ? 4'd2 : 4'd0;
+
+// YCbCr
+reg [7:0]  R, G, B;
+reg [10:0] Y;
+reg [11:0] Cb, Cr;
 
 localparam [2:0]
 	IDLE = 3'd0,
@@ -95,6 +99,13 @@ always @(*) begin
 	origin_row_d = origin_row_q;
 	origin_col_d = origin_col_q;
 
+	R = 8'd0;
+	G = 8'd0;
+	B = 8'd0;
+	Y  = 11'd0;
+	Cb = 12'd0;
+	Cr = 12'd0;
+
 	case (curr_state)
 		IDLE : begin
 			o_op_ready_w = 1'b1;
@@ -113,6 +124,10 @@ always @(*) begin
 
 				5'b11000, 5'b11001 : begin
 					next_state = SCALE;
+				end
+
+				5'b11101 : begin
+					next_state = DONE;
 				end
 
 				default : begin 
@@ -184,9 +199,11 @@ always @(*) begin
 		end
 
 		MEDIAN_FILTERING : begin
+			
 		end
 
 		YCbCR : begin
+			// Implemented in DONE state
 		end
 
 		CENSUS_TRANF : begin
@@ -210,6 +227,21 @@ always @(*) begin
 
 				    default: o_out_data_w = 0;
 				endcase
+
+				if (curr_op_q == 4'b1101) begin
+					R = o_out_data_w[23:16];
+					G = o_out_data_w[15:8];
+					B = o_out_data_w[7:0];
+
+					// fixed point arth
+					Y  = ({2'b0,R,1'b0} + {1'b0,G,2'b0} + {3'b0,G} + 11'd4) >> 3;
+
+					Cb = ({4'b0,B,2'b0} + 12'd1028 - {4'b0,R} - {3'b0,G,1'b0});
+
+					Cr = ({2'b0,R,2'b0} + 12'd1028 - {2'b0,G,1'b0} - {3'b0,G} - {4'b0,B});
+
+					o_out_data_w = {Y[7:0], Cb[10:3], Cr[10:3]};
+				end
 
 			end else begin
 				o_op_ready_w = 1'b1;
