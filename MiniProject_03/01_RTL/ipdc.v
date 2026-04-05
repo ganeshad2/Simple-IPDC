@@ -42,7 +42,6 @@ reg [3:0] origin_row_d, origin_row_q, origin_col_d, origin_col_q;
 
 // ^ ignore 
 
-
 wire [2:0] pixel_offset = (display_q == 3'd2) ? 3'd2 :
                         (display_q == 3'd1) ? 3'd4  : 3'd1;
 
@@ -57,6 +56,13 @@ wire [3:0] col_off_2 = output_ctr_q[0] ? 4'd2 : 4'd0;
 reg [7:0]  R, G, B;
 reg [10:0] Y;
 reg [11:0] Cb, Cr;
+
+
+reg signed [5:0] row_temp, col_temp;
+reg signed [5:0] shift_temp;
+reg [7:0] tempR, tempG, tempB;
+reg [23:0] p0,p1,p2,p3,p5,p6,p7,p8;
+
 
 localparam [2:0]
 	IDLE = 3'd0,
@@ -106,6 +112,21 @@ always @(*) begin
 	Cb = 12'd0;
 	Cr = 12'd0;
 
+	tempR=8'd0; 
+	tempG=8'd0; 
+	tempB=8'd0;
+	p0=24'd0; 
+	p1=24'd0; 
+	p2=24'd0; 
+	p3=24'd0; 
+	p5=24'd0; 
+	p6=24'd0; 
+	p7=24'd0; 
+	p8=24'd0;
+	row_temp=6'd0; 
+	col_temp=6'd0; 
+	shift_temp=6'd0;
+
 	case (curr_state)
 		IDLE : begin
 			o_op_ready_w = 1'b1;
@@ -127,6 +148,14 @@ always @(*) begin
 				end
 
 				5'b11101 : begin
+					next_state = DONE;
+				end
+
+				5'b11110 : begin
+					next_state = DONE;
+				end
+
+				5'b11100 : begin
 					next_state = DONE;
 				end
 
@@ -199,7 +228,7 @@ always @(*) begin
 		end
 
 		MEDIAN_FILTERING : begin
-			
+						
 		end
 
 		YCbCR : begin
@@ -207,6 +236,7 @@ always @(*) begin
 		end
 
 		CENSUS_TRANF : begin
+			// Implemented in DONE state
 		end
 
 		DONE : begin
@@ -215,25 +245,24 @@ always @(*) begin
 				o_out_valid_w = 1'b1;
 
 				case (display_q)
-				    3'd4: o_out_data_w = pixels[{origin_row_q + output_ctr_q[3:2],
-								  origin_col_q + output_ctr_q[1:0]}];
+				    	3'd4: o_out_data_w = pixels[{origin_row_q + output_ctr_q[3:2], origin_col_q + output_ctr_q[1:0]}];
 
-				    //3'd2: o_out_data_w = pixels[{origin_row_q + output_ctr_q[1]*2,
-				    //				  origin_col_q + output_ctr_q[0]*2}];
-					 3'd2: o_out_data_w = pixels[{origin_row_q + row_off_2,
-                                 origin_col_q + col_off_2}];
+				    	//3'd2: o_out_data_w = pixels[{origin_row_q + output_ctr_q[1]*2,
+				    	//				  origin_col_q + output_ctr_q[0]*2}];
+					
+					3'd2: o_out_data_w = pixels[{origin_row_q + row_off_2, origin_col_q + col_off_2}];
 
-				    3'd1: o_out_data_w = pixels[{origin_row_q, origin_col_q}];
+				    	3'd1: o_out_data_w = pixels[{origin_row_q, origin_col_q}];
 
-				    default: o_out_data_w = 0;
+				    	default: o_out_data_w = 0;
 				endcase
 
-				if (curr_op_q == 4'b1101) begin
-					R = o_out_data_w[23:16];
-					G = o_out_data_w[15:8];
-					B = o_out_data_w[7:0];
+				R = o_out_data_w[23:16];
+				G = o_out_data_w[15:8];
+				B = o_out_data_w[7:0];
 
-					// fixed point arth
+				if (curr_op_q == 4'b1101) begin
+					// fixed point arth. Mult-ed everything by 8 to avoid the fractions. Then div by 8 at the end
 					Y  = ({2'b0,R,1'b0} + {1'b0,G,2'b0} + {3'b0,G} + 11'd4) >> 3;
 
 					Cb = ({4'b0,B,2'b0} + 12'd1028 - {4'b0,R} - {3'b0,G,1'b0});
@@ -241,6 +270,70 @@ always @(*) begin
 					Cr = ({2'b0,R,2'b0} + 12'd1028 - {2'b0,G,1'b0} - {3'b0,G} - {4'b0,B});
 
 					o_out_data_w = {Y[7:0], Cb[10:3], Cr[10:3]};
+				end
+
+				if (curr_op_q == 4'b1110) begin
+					case (display_q)
+						3'd4: begin
+							row_temp = {2'b0, origin_row_q + output_ctr_q[3:2]};
+							col_temp = {2'b0, origin_col_q + output_ctr_q[1:0]};
+						end
+						3'd2: begin
+							row_temp = {2'b0, origin_row_q + row_off_2};
+							col_temp = {2'b0, origin_col_q + col_off_2};
+						end
+						default: begin
+							row_temp = {2'b0, origin_row_q};
+							col_temp = {2'b0, origin_col_q};
+						end
+					endcase
+ 
+					shift_temp = {3'b0, pixel_offset};
+ 
+					p0 = ((row_temp-shift_temp >= 0) && (col_temp-shift_temp >= 0)) ? pixels[(row_temp-shift_temp)*16 + 						(col_temp-shift_temp)] : 24'd0;
+
+					p1 = ((row_temp-shift_temp >= 0)) ? pixels[(row_temp-shift_temp)*16+col_temp] : 24'd0;
+
+					p2 = ((row_temp-shift_temp >= 0) && (col_temp+shift_temp <= 15)) ? pixels[(row_temp-shift_temp)*16 						+ (col_temp+shift_temp)] : 24'd0;
+
+					p3 = ((col_temp-shift_temp >= 0)) ? pixels[row_temp*16+(col_temp-shift_temp)] : 24'd0;
+
+					p5 = ((col_temp+shift_temp <= 15)) ? pixels[row_temp*16+(col_temp+shift_temp)] : 24'd0;
+
+					p6 = ((row_temp+shift_temp <= 15) && (col_temp-shift_temp >= 0)) ? pixels[(row_temp+shift_temp)*16 						+ (col_temp-shift_temp)] : 24'd0;
+
+					p7 = ((row_temp+shift_temp <= 15)) ? pixels[(row_temp+shift_temp)*16+col_temp] : 24'd0;
+	
+					p8 = ((row_temp+shift_temp <= 15) && (col_temp+shift_temp <= 15)) ? pixels[(row_temp+shift_temp)*16  						+ (col_temp+shift_temp)] : 24'd0;
+ 
+					tempR[7] = (p0[23:16] > R) ? 1'b1 : 1'b0;
+					tempR[6] = (p1[23:16] > R) ? 1'b1 : 1'b0;
+					tempR[5] = (p2[23:16] > R) ? 1'b1 : 1'b0;
+					tempR[4] = (p3[23:16] > R) ? 1'b1 : 1'b0;
+					tempR[3] = (p5[23:16] > R) ? 1'b1 : 1'b0;
+					tempR[2] = (p6[23:16] > R) ? 1'b1 : 1'b0;
+					tempR[1] = (p7[23:16] > R) ? 1'b1 : 1'b0;
+					tempR[0] = (p8[23:16] > R) ? 1'b1 : 1'b0;
+ 
+					tempG[7] = (p0[15:8] > G) ? 1'b1 : 1'b0;
+					tempG[6] = (p1[15:8] > G) ? 1'b1 : 1'b0;
+					tempG[5] = (p2[15:8] > G) ? 1'b1 : 1'b0;
+					tempG[4] = (p3[15:8] > G) ? 1'b1 : 1'b0;
+					tempG[3] = (p5[15:8] > G) ? 1'b1 : 1'b0;
+					tempG[2] = (p6[15:8] > G) ? 1'b1 : 1'b0;
+					tempG[1] = (p7[15:8] > G) ? 1'b1 : 1'b0;
+					tempG[0] = (p8[15:8] > G) ? 1'b1 : 1'b0;
+ 
+					tempB[7] = (p0[7:0] > B) ? 1'b1 : 1'b0;
+					tempB[6] = (p1[7:0] > B) ? 1'b1 : 1'b0;
+					tempB[5] = (p2[7:0] > B) ? 1'b1 : 1'b0;
+					tempB[4] = (p3[7:0] > B) ? 1'b1 : 1'b0;
+					tempB[3] = (p5[7:0] > B) ? 1'b1 : 1'b0;
+					tempB[2] = (p6[7:0] > B) ? 1'b1 : 1'b0;
+					tempB[1] = (p7[7:0] > B) ? 1'b1 : 1'b0;
+					tempB[0] = (p8[7:0] > B) ? 1'b1 : 1'b0;
+ 
+					o_out_data_w = {tempR, tempG, tempB};
 				end
 
 			end else begin
